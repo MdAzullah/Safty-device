@@ -1,0 +1,47 @@
+# PlatformIO & ESP32 / Embedded build artifacts
+.pio/
+.cache/
+build/
+compile_commands.json
+sdkconfig.old
+firmware/build/
+firmware/.pio/
+firmware/managed_components/
+firmware/sdkconfig.old
+firmware/compile_commands.json
+
+# Local credentials and environment configuration
+.env
+.env.*
+!.env.example
+**/secrets.h
+**/secrets.local.h
+PRIVATE_LOCAL_SETTINGS.txt
+firmware/include/pins_config.local.h
+website/js/config.local.js
+
+# JavaScript dependencies, generated site output, and test coverage
+node_modules/
+dist/
+coverage/
+.firebase/
+
+# Logs and temporary files
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+*.tmp
+*.temp
+
+# IDE & Editor settings
+.vscode/
+.idea/
+*.swp
+*.swo
+.clangd
+
+# OS generated files
+.DS_Store
+Thumbs.db
+desktop.ini

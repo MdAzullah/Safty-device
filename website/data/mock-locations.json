@@ -1,0 +1,372 @@
+{
+  "devices": {
+    "child1": {
+      "live": {
+        "lat": 28.616844,
+        "lng": 77.207509,
+        "timestamp": 1785959939791,
+        "battery": 54,
+        "speed": 0.0,
+        "signal": "Good"
+      },
+      "history": [
+        {
+          "lat": 28.614597,
+          "lng": 77.206625,
+          "timestamp": 1785953039791,
+          "battery": 98,
+          "speed": 3.4,
+          "signal": "Good"
+        },
+        {
+          "lat": 28.615779,
+          "lng": 77.207509,
+          "timestamp": 1785953339791,
+          "battery": 95,
+          "speed": 1.2,
+          "signal": "Weak"
+        },
+        {
+          "lat": 28.613438,
+          "lng": 77.205477,
+          "timestamp": 1785953639791,
+          "battery": 94,
+          "speed": 7.1,
+          "signal": "Good"
+        },
+        {
+          "lat": 28.613745,
+          "lng": 77.206557,
+          "timestamp": 1785953939791,
+          "battery": 91,
+          "speed": 7.6,
+          "signal": "Good"
+        },
+        {
+          "lat": 28.613491,
+          "lng": 77.205448,
+          "timestamp": 1785954239791,
+          "battery": 90,
+          "speed": 10.6,
+          "signal": "Good"
+        },
+        {
+          "lat": 28.614481,
+          "lng": 77.204649,
+          "timestamp": 1785954539791,
+          "battery": 89,
+          "speed": 3.0,
+          "signal": "Good"
+        },
+        {
+          "lat": 28.612492,
+          "lng": 77.204049,
+          "timestamp": 1785954839791,
+          "battery": 87,
+          "speed": 11.9,
+          "signal": "Good"
+        },
+        {
+          "lat": 28.614028,
+          "lng": 77.205198,
+          "timestamp": 1785955139791,
+          "battery": 84,
+          "speed": 1.7,
+          "signal": "Weak"
+        },
+        {
+          "lat": 28.611922,
+          "lng": 77.204164,
+          "timestamp": 1785955439791,
+          "battery": 81,
+          "speed": 8.7,
+          "signal": "Good"
+        },
+        {
+          "lat": 28.612309,
+          "lng": 77.205186,
+          "timestamp": 1785955739791,
+          "battery": 80,
+          "speed": 9.3,
+          "signal": "Good"
+        },
+        {
+          "lat": 28.614735,
+          "lng": 77.206963,
+          "timestamp": 1785956039791,
+          "battery": 79,
+          "speed": 5.3,
+          "signal": "Weak"
+        },
+        {
+          "lat": 28.615413,
+          "lng": 77.206287,
+          "timestamp": 1785956339791,
+          "battery": 77,
+          "speed": 5.0,
+          "signal": "Good"
+        },
+        {
+          "lat": 28.616422,
+          "lng": 77.207205,
+          "timestamp": 1785956639791,
+          "battery": 76,
+          "speed": 8.5,
+          "signal": "Good"
+        },
+        {
+          "lat": 28.616593,
+          "lng": 77.205929,
+          "timestamp": 1785956939791,
+          "battery": 74,
+          "speed": 5.3,
+          "signal": "Good"
+        },
+        {
+          "lat": 28.617516,
+          "lng": 77.207643,
+          "timestamp": 1785957239791,
+          "battery": 73,
+          "speed": 3.2,
+          "signal": "Good"
+        },
+        {
+          "lat": 28.619041,
+          "lng": 77.207149,
+          "timestamp": 1785957539791,
+          "battery": 72,
+          "speed": 3.0,
+          "signal": "Good"
+        },
+        {
+          "lat": 28.617605,
+          "lng": 77.207145,
+          "timestamp": 1785957839791,
+          "battery": 69,
+          "speed": 6.4,
+          "signal": "Good"
+        },
+        {
+          "lat": 28.615803,
+          "lng": 77.20837,
+          "timestamp": 1785958139791,
+          "battery": 66,
+          "speed": 3.7,
+          "signal": "Weak"
+        },
+        {
+          "lat": 28.617792,
+          "lng": 77.207867,
+          "timestamp": 1785958439791,
+          "battery": 65,
+          "speed": 14.0,
+          "signal": "Good"
+        },
+        {
+          "lat": 28.617839,
+          "lng": 77.205822,
+          "timestamp": 1785958739791,
+          "battery": 64,
+          "speed": 12.1,
+          "signal": "Good"
+        },
+        {
+          "lat": 28.618477,
+          "lng": 77.207282,
+          "timestamp": 1785959039791,
+          "battery": 62,
+          "speed": 8.3,
+          "signal": "Weak"
+        },
+        {
+          "lat": 28.617885,
+          "lng": 77.209763,
+          "timestamp": 1785959339791,
+          "battery": 59,
+          "speed": 3.5,
+          "signal": "Good"
+        },
+        {
+          "lat": 28.618786,
+          "lng": 77.207835,
+          "timestamp": 1785959639791,
+          "battery": 56,
+          "speed": 10.5,
+          "signal": "Good"
+        },
+        {
+          "lat": 28.616844,
+          "lng": 77.207509,
+          "timestamp": 1785959939791,
+          "battery": 54,
+          "speed": 0.0,
+          "signal": "Good"
+        }
+      ],
+      "sos_alert": {
+        "active": false,
+        "timestamp": null
+      }
+    },
+    "child2": {
+      "live": {
+        "lat": 28.625937,
+        "lng": 77.192087,
+        "timestamp": 1785959939791,
+        "battery": 61,
+        "speed": 3.5,
+        "signal": "Good"
+      },
+      "history": [
+        {
+          "lat": 28.626259,
+          "lng": 77.19531,
+          "timestamp": 1785954839791,
+          "battery": 97,
+          "speed": 12.8,
+          "signal": "Good"
+        },
+        {
+          "lat": 28.627968,
+          "lng": 77.195348,
+          "timestamp": 1785955139791,
+          "battery": 96,
+          "speed": 2.1,
+          "signal": "Good"
+        },
+        {
+          "lat": 28.628165,
+          "lng": 77.196741,
+          "timestamp": 1785955439791,
+          "battery": 93,
+          "speed": 12.9,
+          "signal": "Good"
+        },
+        {
+          "lat": 28.628108,
+          "lng": 77.194801,
+          "timestamp": 1785955739791,
+          "battery": 91,
+          "speed": 12.3,
+          "signal": "Good"
+        },
+        {
+          "lat": 28.626805,
+          "lng": 77.193505,
+          "timestamp": 1785956039791,
+          "battery": 88,
+          "speed": 13.3,
+          "signal": "Good"
+        },
+        {
+          "lat": 28.627965,
+          "lng": 77.195085,
+          "timestamp": 1785956339791,
+          "battery": 85,
+          "speed": 10.7,
+          "signal": "Good"
+        },
+        {
+          "lat": 28.628763,
+          "lng": 77.197319,
+          "timestamp": 1785956639791,
+          "battery": 84,
+          "speed": 3.7,
+          "signal": "Weak"
+        },
+        {
+          "lat": 28.631085,
+          "lng": 77.199464,
+          "timestamp": 1785956939791,
+          "battery": 81,
+          "speed": 9.7,
+          "signal": "Good"
+        },
+        {
+          "lat": 28.63058,
+          "lng": 77.200322,
+          "timestamp": 1785957239791,
+          "battery": 79,
+          "speed": 6.1,
+          "signal": "Weak"
+        },
+        {
+          "lat": 28.628685,
+          "lng": 77.198946,
+          "timestamp": 1785957539791,
+          "battery": 77,
+          "speed": 0.3,
+          "signal": "Good"
+        },
+        {
+          "lat": 28.629127,
+          "lng": 77.196482,
+          "timestamp": 1785957839791,
+          "battery": 74,
+          "speed": 8.8,
+          "signal": "Good"
+        },
+        {
+          "lat": 28.626964,
+          "lng": 77.194139,
+          "timestamp": 1785958139791,
+          "battery": 72,
+          "speed": 1.0,
+          "signal": "Good"
+        },
+        {
+          "lat": 28.625857,
+          "lng": 77.194066,
+          "timestamp": 1785958439791,
+          "battery": 69,
+          "speed": 1.9,
+          "signal": "Weak"
+        },
+        {
+          "lat": 28.624572,
+          "lng": 77.193931,
+          "timestamp": 1785958739791,
+          "battery": 67,
+          "speed": 2.7,
+          "signal": "Good"
+        },
+        {
+          "lat": 28.625367,
+          "lng": 77.193202,
+          "timestamp": 1785959039791,
+          "battery": 65,
+          "speed": 6.5,
+          "signal": "Good"
+        },
+        {
+          "lat": 28.626233,
+          "lng": 77.195623,
+          "timestamp": 1785959339791,
+          "battery": 64,
+          "speed": 0.8,
+          "signal": "Good"
+        },
+        {
+          "lat": 28.627736,
+          "lng": 77.193669,
+          "timestamp": 1785959639791,
+          "battery": 63,
+          "speed": 2.7,
+          "signal": "Weak"
+        },
+        {
+          "lat": 28.625937,
+          "lng": 77.192087,
+          "timestamp": 1785959939791,
+          "battery": 61,
+          "speed": 3.5,
+          "signal": "Good"
+        }
+      ],
+      "sos_alert": {
+        "active": false,
+        "timestamp": null
+      }
+    }
+  }
+}

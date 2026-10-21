@@ -1,0 +1,20 @@
+{
+  "folders": [
+    {
+      "name": "Firmware (ESP32)",
+      "path": "firmware"
+    },
+    {
+      "name": "Website (Dashboard)",
+      "path": "website"
+    }
+  ],
+  "settings": {
+    "platformio-ide.autoRebuildAutocompleteIndex": true,
+    "platformio-ide.activateProjectOnTextEditorChange": true,
+    "files.exclude": {
+      "**/__pycache__": true
+    },
+    "liveServer.settings.multiRootWorkspaceName": "Website (Dashboard)"
+  }
+}

@@ -1,0 +1,69 @@
+Redesign this dashboard UI to feel like a premium, modern safety-tech product 
+(think Life360 meets a high-end fintech dashboard), not a generic AI-generated 
+template. Keep the dark theme but improve it with these specifics:
+
+VISUAL SYSTEM:
+- Use a refined dark navy/charcoal background (#0B0F19 range) with a subtle 
+  radial gradient or noise texture instead of flat black, so the canvas has depth.
+- Establish ONE consistent accent color pairing: amber/gold (#F5A623 range) for 
+  primary branding/active states, and a cool cyan/blue (#4FD1FF range) for 
+  live-data/GPS elements. Use these purposefully, not decoratively.
+- Add real elevation: give cards (Live Status, Recent Locations, stat tiles) a 
+  soft drop shadow + 1px subtle border with slight transparency, so they 
+  visually lift off the background. Avoid identical flat boxes with no depth cues.
+- Use glassmorphism (semi-transparent background + backdrop blur) for the 
+  floating sidebar and header so the map feels like it's underneath the UI, 
+  not beside it.
+
+TYPOGRAPHY & HIERARCHY:
+- Make stat labels (DEVICE, BATTERY, SPEED, COORDINATES) small, uppercase, 
+  muted gray, letter-spaced.
+- Make stat values large, bold, high-contrast white — these are the things 
+  users actually look at.
+- Add small contextual icons next to each stat (battery icon, speed gauge icon, 
+  GPS signal bars) instead of bare text.
+
+MAP — MAKE IT FEEL LIKE REAL GOOGLE MAPS:
+- Replace any flat/wireframe map rendering with a real vector map tile provider 
+  (Mapbox GL JS, Google Maps JS API dark mode, or MapLibre) styled in dark 
+  "night mode" to match Google Maps' visual language.
+- Road hierarchy: highways/major roads rendered thicker and brighter, arterial 
+  roads medium weight, minor streets thin and dim — not uniform line weights.
+- Land-use shading: parks/green spaces in subtle green tint, water bodies in 
+  dark blue tint, built-up urban blocks slightly distinct from open land.
+- POI icons: show metro stations, hospitals, parks, and notable landmarks with 
+  proper icon + label styling that appears/disappears based on zoom level.
+- Smooth zoom/pan animations (no jump cuts), with labels that fade in/out 
+  naturally as you zoom.
+- Add a small compass control, scale bar, and map attribution in a bottom 
+  corner for authenticity.
+- Marker pins should use a proper teardrop pin shape with drop shadow (like 
+  Google's default pin), and cluster into a numbered circle when multiple 
+  points are close together at low zoom.
+- Add a soft pulsing radar/glow animation around the current-location marker 
+  (concentric expanding rings in the cyan accent) to convey "live."
+- Style the past-path line as a glowing gradient trail instead of a plain thin line.
+- Redesign zoom controls and "Center Map" button as a cohesive floating 
+  pill/icon cluster with hover states, not default-looking buttons.
+
+CARDS & PANELS:
+- Live Status: arrange stat tiles in a responsive grid with consistent internal 
+  padding, subtle dividers, and a colored status indicator that pulses when 
+  "Online."
+- Recent Locations: fix vertical spacing so timestamps and coordinates never 
+  clip behind the scrollbar; use a custom-styled thin scrollbar matching the 
+  accent color; add a subtle hover-highlight per row; add a small "just now / 
+  Xs ago" relative time tag.
+- Add smooth entrance/hover micro-animations (fade-in, slight scale on hover) 
+  to cards for a polished feel.
+
+HEADER:
+- Give the beacon icon a subtle glow/ring animation to match "Active" status.
+- Style the "Beacon Active" and dark-mode toggle as a unified pill group with 
+  clear active/inactive states, not plain badges.
+
+OVERALL GOAL:
+The page should feel alive, data-dense but breathable, with clear visual 
+hierarchy directing attention to the live tracking status first, then details 
+— not a flat, static, template-like layout. It should feel like a real, 
+professional mapping product, not a demo.

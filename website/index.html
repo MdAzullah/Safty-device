@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Guardian Beacon — Safety Dashboard</title>
+
+  <!-- Typography -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap"
+    rel="stylesheet">
+
+  <!-- Leaflet Map CSS & JS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- Firebase Realtime Database SDK (Optional CDN) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+
+  <!-- Application Stylesheet -->
+  <link rel="stylesheet" href="css/style.css" />
+
+</head>
+
+<body>
+  <!-- Header / Navigation Bar -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
+          <circle cx="13" cy="13" r="12" stroke="currentColor" stroke-width="1.4" />
+          <circle cx="13" cy="13" r="4.2" fill="currentColor" />
+          <circle cx="13" cy="13" r="8" stroke="currentColor" stroke-width="1" opacity="0.5" />
+        </svg>
+      </span>
+      <div class="brand-text">
+        <span class="brand-name">Guardian Beacon</span>
+        <span class="brand-sub">Safety Device Dashboard</span>
+      </div>
+    </div>
+
+    <div class="topbar-actions">
+      <div class="guardian-auth" aria-label="Guardian account">
+        <input id="guardianEmail" type="email" autocomplete="username" placeholder="Guardian email" aria-label="Guardian email">
+        <input id="guardianPassword" type="password" autocomplete="current-password" placeholder="Password" aria-label="Guardian password">
+        <button class="icon-tool-btn" id="guardianSignIn" type="button">Sign in</button>
+        <button class="icon-tool-btn" id="guardianSignOut" type="button" hidden>Sign out</button>
+        <span id="guardianAuthStatus" role="status" aria-live="polite"></span>
+      </div>
+      <span class="conn-pill connected" id="connPill">
+        <span class="dot"></span> <span id="connText">Beacon Active</span>
+      </span>
+      <button class="theme-toggle" id="themeToggleBtn" aria-label="Toggle light or dark theme" title="Toggle theme">🌙</button>
+    </div>
+  </header>
+
+  <!-- SOS Emergency Alert Banner -->
+  <div class="sos-banner" id="sosBanner" hidden>
+    <div class="sos-banner-inner">
+      <span class="sos-pulse-dot"></span>
+      <div class="sos-text">
+        <strong id="sosTitle">SOS ALERT — Guardian Beacon</strong>
+        <span id="sosSub">Emergency alert triggered · Live coordinates updating</span>
+      </div>
+      <button class="sos-ack" id="sosAck">Acknowledge</button>
+    </div>
+  </div>
+
+  <!-- Main Dashboard Shell -->
+  <main class="app-shell">
+    <div class="layout">
+      <!-- Map Section -->
+      <section class="map-panel">
+        <div class="map-toolbar">
+          <div class="map-toolbar-left">
+            <div class="device-badge">
+              <span class="device-badge-dot"></span>
+              <span class="device-badge-name" id="badgeDeviceName">Guardian Beacon</span>
+            </div>
+            <div class="map-legend">
+              <span class="legend-item"><span class="legend-swatch live"></span> Current location</span>
+              <span class="legend-item"><span class="legend-swatch trail"></span> Past path</span>
+            </div>
+          </div>
+          <div class="map-toolbar-right">
+            <button class="icon-tool-btn" id="btnParentLocation" type="button" title="Share this browser's location on the map">
+              <span class="icon">◎</span> My Location
+            </button>
+            <button class="icon-tool-btn" id="btnCenterMapTop" title="Center on Beacon">
+              <span class="icon">⌖</span> Center Map
+            </button>
+          </div>
+        </div>
+        <div class="map-stack">
+          <div id="map"></div>
+          <div class="map-location-status" id="parentLocationStatus" role="status" aria-live="polite">Your location is not shared</div>
+        </div>
+      </section>
+
+      <!-- Sidebar Status & Telemetry Panel -->
+      <aside class="sidebar">
+        <!-- Live Status Card -->
+        <div class="card status-card">
+          <div class="card-head">
+            <h2>Live Status</h2>
+            <span class="pill online" id="deviceOnlinePill">Online</span>
+          </div>
+          <div class="status-grid">
+            <div class="status-item">
+              <span class="status-label">Device</span>
+              <span class="status-value" id="statChild">Guardian Beacon</span>
+            </div>
+            <div class="status-item">
+              <span class="status-label">Last Update</span>
+              <span class="status-value mono" id="statUpdated">—</span>
+            </div>
+            <div class="status-item">
+              <span class="status-label">Coordinates</span>
+              <span class="status-value mono" id="statCoords">—</span>
+            </div>
+            <div class="status-item">
+              <span class="status-label">Battery</span>
+              <span class="status-value" id="statBattery">—</span>
+            </div>
+            <div class="status-item">
+              <span class="status-label">Speed</span>
+              <span class="status-value mono" id="statSpeed">—</span>
+            </div>
+            <div class="status-item">
+              <span class="status-label">Network</span>
+              <span class="status-value" id="statNetwork">Cellular (A9G)</span>
+            </div>
+            <div class="status-item">
+              <span class="status-label">GPS Signal</span>
+              <span class="status-value" id="statSignal">—</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Recent Locations / Pings Card -->
+        <div class="card history-card">
+          <div class="card-head">
+            <h2>Recent Locations</h2>
+            <span class="eyebrow">Live Feed</span>
+          </div>
+          <ul class="history-list" id="historyList"></ul>
+        </div>
+
+        <!-- Quick Actions Card -->
+        <div class="card actions-card">
+          <div class="card-head">
+            <h2>Quick Actions</h2>
+          </div>
+          <div class="actions-grid">
+            <button class="action-btn" id="btnCenter">
+              <span class="action-icon">⌖</span> Center Map
+            </button>
+            <button class="action-btn" id="btnCall">
+              <span class="action-icon">☎</span> Call Device
+            </button>
+            <button class="action-btn" id="btnShare">
+              <span class="action-icon">↗</span> Share Location
+            </button>
+            <button class="action-btn danger" id="btnTestSos">
+              <span class="action-icon">▲</span> Simulate SOS
+            </button>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <!-- Application Entry Point -->
+  <script type="module" src="js/app.js"></script>
+</body>
+
+</html>
