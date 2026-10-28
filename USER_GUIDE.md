@@ -54,9 +54,36 @@ Firmware configuration is in `firmware/include/pins_config.h`:
   The local override should define `PARENT_NUMBER`, `PARENT_NUMBER_2` (or leave it empty), `WIFI_SSID`, and `WIFI_PASS`. The checked-in `PARENT_NUMBER` is a dummy value and cannot receive emergency calls or SMS.
 5. Keep the firmware device ID and database URL aligned with `website/js/config.js` and Firebase. Current configured device ID: `beacon-01`.
 6. Build and flash through the ESP-IDF VS Code extension or a properly configured ESP-IDF environment. Connect the board via USB and select the correct serial port. Open the serial monitor at the configured monitor baud rate (typically 115200; check your ESP-IDF settings).
-7. On startup, check logs for A9G UART, SIM, GSM registration, GPS enable, and Wi-Fi connection. A GPS antenna fix and cloud write are separate: the device can have modem ready but not yet have a GPS fix, or have GPS but no Wi-Fi internet.
+7. On startup, check logs for A9G UART, GPS enable, and Wi-Fi connection. SIM readiness and GSM registration are needed for SMS/calls, but do not block GPS or Wi-Fi cloud uploads. A GPS antenna fix and cloud write are separate: the device can have modem ready but not yet have a GPS fix, or have GPS but no Wi-Fi internet.
 
-Firmware updates are currently configured around 15-second telemetry intervals. Cloud uploads require Wi-Fi. A9G provides the GPS/SMS/call functions, but not cloud HTTP writes in this version.
+The firmware (1.2+) runs three independent tasks: a safety task (SOS button and sequence), a cloud task (Wi-Fi and Firebase), and a modem task (A9G, GPS, SIM/signal, battery). A heartbeat is written to `/live` every 5 seconds whenever Wi-Fi is up, even with no GPS fix, no SIM card, or an A9G that is not responding. Each value is reported separately, so one failing subsystem never stops the others from reaching the dashboard. Cloud uploads require Wi-Fi; the A9G provides GPS/SMS/call only.
+
+Reliability features in 1.2:
+
+- **SOS needs a 1-second press.** The button must be held continuously for `SOS_LONG_PRESS_MS` (default 1000 ms) before SOS starts; taps and electrical noise are ignored. Two beeps confirm the press was accepted. Override `SOS_LONG_PRESS_MS` in `pins_config.local.h` if needed.
+- **SOS gets the modem immediately**: any background GPS/SIM query in progress is cut short.
+- **GPS quality**: speed, heading, satellites and HDOP come from the A9G's NMEA stream (`AT+GPSRD`). If your A9G firmware does not provide NMEA, the log says `using AT+LOCATION instead` and speed is estimated from successive fixes. Fixes with poor accuracy (HDOP > 5) or impossible jumps are kept out of the history trail.
+- **Uploads**: a failed request is retried once on a fresh connection; a new GPS point and the heartbeat are sent in one request once the clock is synchronized over NTP.
+- **Wi-Fi**: reconnects with back-off (1 s up to 30 s), never interrupts a connection in progress, and recovers when DHCP stalls. Power saving is off by default for low latency (`WIFI_POWER_SAVE`).
+- **Self-healing**: the cloud and modem tasks are watched by the task watchdog (60 s). The device also restarts if Wi-Fi is up but nothing has uploaded for 10 minutes. A9G that stops answering is re-initialized.
+- **Diagnostics** in `/live/diag`: last reset reason, boot count, free memory, upload counters, Wi-Fi reconnects and clock sync. The website shows them under **Diagnostics**.
+
+Expected serial log lines when everything works:
+
+```text
+I (…) CLOUD: Wi-Fi connected. IP: 192.168.x.x
+I (…) CLOUD: PUT live -> 204 (150 ms)          every 5 s
+I (…) SOS: Cellular: SIM NOT detected (SMS/call unavailable), network not registered, CSQ …
+W (…) SOS: GPS searching for satellites (no fix yet). Antenna needs open sky.
+I (…) STATE: GPS fix #1: 28.6162123, 77.2079612
+I (…) CLOUD: POST history -> 204 (300 ms)
+```
+
+`PUT live -> 401` means the Realtime Database rules deny device writes. `Wi-Fi connect failed (reason 15/204)` usually means a wrong password, and `reason 201` means the SSID was not found (the ESP32 supports only 2.4 GHz). Set `A9G_VERBOSE_AT 1` in `pins_config.local.h` to log every AT command.
+
+Status LED outside an SOS: a short blink every 3 seconds means cloud uploads are working; a 1 Hz blink means there is no Wi-Fi or uploads are failing.
+
+The build uses the "single factory app (large)" partition table (1.5 MB app). Flash with `idf.py flash` (or the extension's Flash command) so the new partition table is written together with the app.
 
 ## 4. Configure Firebase
 
@@ -89,7 +116,7 @@ The Firebase Web App API key identifies the public Web App; it is not an Admin c
 /guardians/<auth-uid>/location Guardian browser location (only after consent)
 ```
 
-Live telemetry includes `lat`, `lng`, `speed`, `battery`, `signal`, `network`, `status`, and `timestamp`. History contains similar fields. SOS includes `active`, `deviceName`, optional coordinates, and timestamp. Firebase server timestamps resolve to epoch milliseconds for the website's display and 45-second offline check.
+Live telemetry is described field by field in [website/README.md](website/README.md#database-schema-and-update-behavior). In short: a heartbeat with `status`, `timestamp`, Wi-Fi, modem, SIM/cellular, battery and GPS state, plus the last known `lat`/`lng` with `gpsFix` saying whether it is current. History holds only real new GPS fixes. SOS is written the moment the button is pressed and updated with the final location and SMS/call results. Firebase server timestamps resolve to epoch milliseconds; the website corrects for the browser clock and marks the device Delayed after about 9 seconds and Offline after 15 seconds without a heartbeat.
 
 ### Rules and important security trade-off
 
@@ -141,11 +168,11 @@ Perform tests in a safe place with an authorized SIM/contact:
 
 1. **Website only:** load the map and confirm map tiles render. Click **My Location**, allow permission, and verify the parent marker appears.
 2. **Firebase auth:** sign in; verify status changes to signed in. Confirm the UID-specific guardian location is readable/writable under database rules. Sign out and verify the parent listener is detached.
-3. **Firmware boot:** check serial logs for successful modem communication, SIM readiness, network registration, and Wi-Fi IP address.
+3. **Firmware boot:** check serial logs for successful modem communication, SIM readiness, network registration, Wi-Fi IP address, and `PUT live -> 204` (or `PATCH device -> 204` with a new GPS point) every 5 seconds. Without a SIM or GPS fix the website must still show the device Online with "No SIM" / "Searching".
 4. **GPS:** take the device outdoors, wait for a valid fix, and check logged latitude/longitude are plausible for the device's physical location.
 5. **Cloud live record:** confirm `/devices/beacon-01/live` changes in Firebase. Website should show matching coordinates and recent time and show Online while fresh timestamps arrive.
 6. **History:** confirm new children appear under `/devices/beacon-01/history` and the website trail/recent-location list updates.
-7. **SOS:** with consent, press the physical button and verify location attempt, SMS/call behavior, Firebase SOS state, website banner, and acknowledge reset. Test separately with GPS unavailable and network unavailable.
+7. **SOS:** with consent, hold the physical button for 1 second (a short tap must not trigger) and verify location attempt, SMS/call behavior, Firebase SOS state, website banner, and acknowledge reset. Test separately with GPS unavailable and network unavailable.
 8. **Security:** test rules as signed-out, wrong guardian, correct guardian, and device. Do not leave test-mode rules enabled.
 
 Never use only the website's **Simulate SOS** button to claim hardware SMS/call works; that button only creates a browser-side demo event.
@@ -159,6 +186,7 @@ Never use only the website's **Simulate SOS** button to claim hardware SMS/call 
 | Website reports Offline | Check `timestamp` is a Firebase-resolved epoch-millisecond number, latest live data is updating, Firebase read rules permit the signed-in account, and local clock is correct. |
 | Firebase permission denied | Sign in; check Email/Password is enabled, Web App config is complete, database URL is correct, and rules allow this account/device path. |
 | No cloud records | Confirm Wi-Fi credentials, 2.4 GHz access, router internet, serial Wi-Fi IP log, Firebase URL, TLS certificate bundle/build config, and database rules. Current cloud upload does not use A9G cellular data. |
+| Serial log shows `No matching trusted root certificate found` and `PUT live failed: ESP_ERR_HTTP_CONNECT` | Firebase's chain ends at "GlobalSign Root CA", which ESP-IDF v6 no longer ships. The root is added from `firmware/certs/firebase_extra_roots.pem` (`CONFIG_MBEDTLS_CUSTOM_CERTIFICATE_BUNDLE`); keep that setting enabled, and update the file if Google changes its chain or before the root expires (Jan 2028). |
 | GPS stays unavailable | Test outdoors, check antenna/connection and A9G power, wait for cold-start fix, inspect A9G UART logs. |
 | SMS/call fails | Verify SIM service, antenna, balance/plan, number format, country code, network registration, and power supply stability. |
 | Parent marker not saved to another session | Use HTTPS or localhost, allow location permission, sign into the same Firebase user on both sessions, and inspect `/guardians/<UID>/location` rules/data. |

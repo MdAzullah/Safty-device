@@ -1,4 +1,5 @@
 # PlatformIO & ESP32 / Embedded build artifacts
+# (keep firmware/sdkconfig and firmware/sdkconfig.<env> tracked: they are the build configuration)
 .pio/
 .cache/
 build/
@@ -7,39 +8,56 @@ sdkconfig.old
 firmware/build/
 firmware/.pio/
 firmware/managed_components/
+firmware/dependencies.lock
 firmware/sdkconfig.old
 firmware/compile_commands.json
+*.bin
+*.elf
+*.map
 
-# Local credentials and environment configuration
+# Local credentials and environment configuration (never commit)
 .env
 .env.*
 !.env.example
 **/secrets.h
 **/secrets.local.h
+**/*.local.h
 PRIVATE_LOCAL_SETTINGS.txt
 firmware/include/pins_config.local.h
 website/js/config.local.js
+*service-account*.json
+*firebase-adminsdk*.json
+*.key
+# Note: firmware/certs/*.pem are PUBLIC root certificates and are tracked.
 
-# JavaScript dependencies, generated site output, and test coverage
+# JavaScript / Python tooling, generated site output, and test coverage
 node_modules/
 dist/
 coverage/
 .firebase/
+__pycache__/
+*.pyc
+.venv/
 
 # Logs and temporary files
 *.log
 npm-debug.log*
 yarn-debug.log*
 pnpm-debug.log*
+firebase-debug.log
 *.tmp
 *.temp
 
-# IDE & Editor settings
+# IDE & editor settings
 .vscode/
 .idea/
 *.swp
 *.swo
 .clangd
+
+# AI agent local state (shared instructions live in AGENTS.md / CLAUDE.md)
+.claude/settings.local.json
+CLAUDE.local.md
 
 # OS generated files
 .DS_Store

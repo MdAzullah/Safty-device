@@ -2,15 +2,21 @@
    Guardian Beacon - ESP32 + AI-Thinker A9G
    ESP-IDF Safety Firmware
 
-   BEHAVIOR
+   ARCHITECTURE
    ---------------------------------------------------------
-   NORMAL:
-     - GPS enabled continuously.
-     - GPS checked immediately after boot.
-     - GPS checked every 30 seconds.
-     - Every valid GPS fix becomes the LAST LIVE LOCATION.
+   Independent tasks, so one failing subsystem never stops
+   the others from reporting:
+
+     safety_task  (prio 10) SOS button (long press), SOS sequence, status LED
+     cloud_task   (prio 4)  Wi-Fi + Firebase heartbeat/history/SOS
+     modem_task   (prio 3)  A9G supervision, GPS, SIM/signal, battery
+
+   The device heartbeat reaches the website every
+   CLOUD_HEARTBEAT_MS while Wi-Fi is up, with or without
+   GPS fix, SIM card, or a responding modem.
 
    SOS:
+     - Alert is published to the website immediately.
      - Start a 10-second fresh GPS acquisition window.
      - If a fresh GPS fix is obtained within 10 seconds:
          -> SMS current location
@@ -25,25 +31,32 @@
          -> NO location SMS
          -> CALL guardian immediately
 
+     - Website alert is updated with the final location and
+       SMS/call results.
+
+   STATUS LED (outside SOS):
+     short blink every 3 s  -> cloud uploads OK
+     1 Hz blink             -> no Wi-Fi or uploads failing
+
    ========================================================= */
 
 #include "driver/gpio.h"
 #include "esp_log.h"
+#include "esp_system.h"
+#include "esp_task_wdt.h"
 #include "esp_timer.h"
+#include "nvs.h"
+#include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "esp_wifi.h"
-#include "esp_event.h"
-#include "nvs_flash.h"
-#include "esp_netif.h"
-#include "esp_http_client.h"
-#include "esp_crt_bundle.h"
 
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "a9g_module.h"
+#include "cloud_sync.h"
+#include "device_state.h"
 #include "pins_config.h"
 
 static const char *TAG = "SOS";
@@ -85,20 +98,18 @@ typedef enum
 // GLOBAL STATE
 // =========================================================
 
-static gps_location_t last_live_location = {0};
-
 static gps_location_t sos_current_location = {0};
 
-static sos_state_t sos_state =
+// Written by safety_task, read by modem_task.
+static volatile sos_state_t sos_state =
     SOS_STATE_NORMAL;
 
 static int64_t sos_started_ms = 0;
 
 static int64_t last_sos_gps_attempt_ms = 0;
 
-static int64_t last_periodic_gps_ms = 0;
-
-static bool a9g_ready = false;
+// Written by modem_task, read by safety_task.
+static volatile bool a9g_ready = false;
 
 static bool sos_sms_ok = false;
 
@@ -146,42 +157,22 @@ static void beep(
 }
 
 // =========================================================
-// SAVE LAST LIVE LOCATION
+// LAST KNOWN LOCATION
 // =========================================================
 
-static void save_last_live_location(
-    double lat,
-    double lon,
-    int64_t fix_time_ms)
+static gps_location_t last_known_location(void)
 {
-    last_live_location.latitude =
-        lat;
+    device_state_t state;
+    device_state_snapshot(&state);
 
-    last_live_location.longitude =
-        lon;
+    gps_location_t location = {
+        .latitude = state.latitude,
+        .longitude = state.longitude,
+        .valid = state.has_location,
+        .fix_time_ms = state.fix_time_ms
+    };
 
-    last_live_location.valid =
-        true;
-
-    last_live_location.fix_time_ms =
-        fix_time_ms;
-
-    ESP_LOGI(
-        TAG,
-        "LAST LIVE LOCATION UPDATED:"
-    );
-
-    ESP_LOGI(
-        TAG,
-        "Latitude : %.7f",
-        lat
-    );
-
-    ESP_LOGI(
-        TAG,
-        "Longitude: %.7f",
-        lon
-    );
+    return location;
 }
 
 // =========================================================
@@ -189,7 +180,7 @@ static void save_last_live_location(
 // =========================================================
 //
 // IMPORTANT:
-// This function updates last_live_location ONLY when
+// The shared last known location is updated ONLY when
 // a VALID GPS response is received.
 //
 // =========================================================
@@ -212,15 +203,13 @@ static bool request_gps_and_save(
         return false;
     }
 
-    int64_t fix_time =
-        now_ms();
-
-    // Save as latest live location
-    save_last_live_location(
-        lat,
-        lon,
-        fix_time
-    );
+    if (!device_state_record_fix(
+            lat,
+            lon,
+            NULL))
+    {
+        return false;
+    }
 
     // Optional output structure
     if (output != NULL)
@@ -235,308 +224,11 @@ static bool request_gps_and_save(
             true;
 
         output->fix_time_ms =
-            fix_time;
+            now_ms();
     }
 
     return true;
 }
-
-// =========================================================
-// ESP32 WI-FI FALLBACK & HYBRID NETWORK MANAGER
-// =========================================================
-
-static bool s_wifi_connected = false;
-
-static void wifi_event_handler(void* arg, esp_event_base_t event_base,
-                               int32_t event_id, void* event_data)
-{
-    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START)
-    {
-        esp_wifi_connect();
-    }
-    else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED)
-    {
-        s_wifi_connected = false;
-        ESP_LOGW(TAG, "Wi-Fi disconnected. Auto-reconnecting in background...");
-        esp_wifi_connect();
-    }
-    else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP)
-    {
-        ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
-        ESP_LOGI(TAG, "Wi-Fi Connected! IP: " IPSTR, IP2STR(&event->ip_info.ip));
-        s_wifi_connected = true;
-    }
-}
-
-static void wifi_init_fallback(void)
-{
-#if WIFI_FALLBACK_ENABLED
-    if (WIFI_SSID[0] == '\0' || WIFI_PASS[0] == '\0')
-    {
-        ESP_LOGW(TAG, "Wi-Fi fallback is enabled but credentials are empty; skipping Wi-Fi initialization.");
-        return;
-    }
-
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND)
-    {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        ret = nvs_flash_init();
-    }
-    ESP_ERROR_CHECK(ret);
-
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_create_default_wifi_sta();
-
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-
-    esp_event_handler_instance_t instance_any_id;
-    esp_event_handler_instance_t instance_got_ip;
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT,
-                                                        ESP_EVENT_ANY_ID,
-                                                        &wifi_event_handler,
-                                                        NULL,
-                                                        &instance_any_id));
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT,
-                                                        IP_EVENT_STA_GOT_IP,
-                                                        &wifi_event_handler,
-                                                        NULL,
-                                                        &instance_got_ip));
-
-    wifi_config_t wifi_config = {
-        .sta = {
-            .ssid = WIFI_SSID,
-            .password = WIFI_PASS,
-            .threshold.authmode = WIFI_AUTH_WPA2_PSK,
-        },
-    };
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
-    ESP_ERROR_CHECK(esp_wifi_start());
-    ESP_LOGI(TAG, "ESP32 Fallback Wi-Fi station initialized for SSID: %s", WIFI_SSID);
-#endif
-}
-
-static bool esp_wifi_http_send(const char *url, const char *json_body, esp_http_client_method_t method)
-{
-    esp_http_client_config_t config = {
-        .url = url,
-        .timeout_ms = 6000,
-        .crt_bundle_attach = esp_crt_bundle_attach,
-    };
-    esp_http_client_handle_t client = esp_http_client_init(&config);
-    if (!client)
-        return false;
-
-    esp_http_client_set_method(client, method);
-    esp_http_client_set_header(client, "Content-Type", "application/json");
-    esp_http_client_set_post_field(client, json_body, strlen(json_body));
-
-    esp_err_t err = esp_http_client_perform(client);
-    bool success = false;
-    if (err == ESP_OK)
-    {
-        int status_code = esp_http_client_get_status_code(client);
-        if (status_code >= 200 && status_code < 300)
-        {
-            ESP_LOGI(TAG, "Wi-Fi HTTPS Cloud Sync OK (Status %d)", status_code);
-            success = true;
-        }
-        else
-        {
-            ESP_LOGW(TAG, "Wi-Fi HTTPS Cloud Sync HTTP Status: %d", status_code);
-        }
-    }
-    else
-    {
-        ESP_LOGE(TAG, "Wi-Fi HTTPS request error: %s", esp_err_to_name(err));
-    }
-
-    esp_http_client_cleanup(client);
-    return success;
-}
-
-static bool cloud_send_payload(const char *url, const char *json_body, bool is_post, const char **out_medium)
-{
-    // Use the ESP32 HTTP client for both methods. The A9G command path
-    // does not provide a verified PUT implementation, and UART HTTP could
-    // block SOS GPS/SMS/call operations while holding the modem lock.
-    if (s_wifi_connected)
-    {
-        bool wifi_ok = esp_wifi_http_send(url, json_body, is_post ? HTTP_METHOD_POST : HTTP_METHOD_PUT);
-        if (wifi_ok)
-        {
-            if (out_medium) *out_medium = "Wi-Fi (ESP32)";
-            return true;
-        }
-    }
-
-    if (out_medium) *out_medium = "Offline";
-    return false;
-}
-
-// =========================================================
-// CLOUD TELEMETRY SYNC (WEBSITE INTEGRATION)
-// =========================================================
-
-static void sync_telemetry_to_cloud(double lat, double lon, double speed)
-{
-    int battery_pct = 100;
-    int battery_mv = 4000;
-    if (a9g_ready)
-    {
-        a9g_get_battery(&battery_pct, &battery_mv);
-    }
-
-    char signal_str[32] = "Good";
-    int rssi = 20;
-    if (a9g_ready)
-    {
-        a9g_get_signal(signal_str, sizeof(signal_str), &rssi);
-    }
-
-    const char *network_mode = "ESP32 Wi-Fi";
-
-    // 1. Prepare Live Telemetry JSON
-    char live_url[256];
-    snprintf(live_url, sizeof(live_url), "%s/devices/%s/live.json", CLOUD_API_BASE_URL, DEVICE_ID);
-
-    char live_json[320];
-    snprintf(
-        live_json,
-        sizeof(live_json),
-        "{\"lat\":%.7f,\"lng\":%.7f,\"speed\":%.1f,\"battery\":%d,\"signal\":\"%s\",\"network\":\"%s\",\"status\":\"Online\",\"timestamp\":{\".sv\":\"timestamp\"}}",
-        lat, lon, speed, battery_pct, signal_str, network_mode
-    );
-
-    ESP_LOGI(TAG, "Syncing Live Telemetry to Website: %s", live_json);
-    cloud_send_payload(live_url, live_json, false, NULL);
-
-    // 2. Append to History Trail JSON
-    char history_url[256];
-    snprintf(history_url, sizeof(history_url), "%s/devices/%s/history.json", CLOUD_API_BASE_URL, DEVICE_ID);
-
-    char history_json[320];
-    snprintf(
-        history_json,
-        sizeof(history_json),
-        "{\"lat\":%.7f,\"lng\":%.7f,\"speed\":%.1f,\"battery\":%d,\"signal\":\"%s\",\"network\":\"%s\",\"timestamp\":{\".sv\":\"timestamp\"}}",
-        lat, lon, speed, battery_pct, signal_str, network_mode
-    );
-
-    cloud_send_payload(history_url, history_json, true, NULL);
-}
-
-static void sync_sos_to_cloud(bool active, double lat, double lon)
-{
-    char sos_url[256];
-    snprintf(sos_url, sizeof(sos_url), "%s/devices/%s/sos_alert.json", CLOUD_API_BASE_URL, DEVICE_ID);
-
-    char sos_json[256];
-    if (active)
-    {
-        if (lat == 0.0 && lon == 0.0)
-        {
-            snprintf(sos_json, sizeof(sos_json),
-                     "{\"active\":true,\"deviceName\":\"%s\",\"timestamp\":{\".sv\":\"timestamp\"}}",
-                     DEVICE_NAME);
-        }
-        else
-        {
-            snprintf(
-                sos_json,
-                sizeof(sos_json),
-                "{\"active\":true,\"deviceName\":\"%s\",\"lat\":%.7f,\"lng\":%.7f,\"timestamp\":{\".sv\":\"timestamp\"}}",
-                DEVICE_NAME, lat, lon
-            );
-        }
-    }
-    else
-    {
-        snprintf(
-            sos_json,
-            sizeof(sos_json),
-            "{\"active\":false,\"deviceName\":\"%s\",\"timestamp\":{\".sv\":\"timestamp\"}}",
-            DEVICE_NAME
-        );
-    }
-
-    ESP_LOGW(TAG, "Broadcasting SOS alert to Website: %s", sos_json);
-    cloud_send_payload(sos_url, sos_json, false, NULL);
-}
-
-// =========================================================
-// PERIODIC GPS & CLOUD UPDATE
-// =========================================================
-
-static void handle_periodic_gps_update(void)
-{
-    if (!a9g_ready)
-        return;
-
-    // Never perform periodic GPS acquisition while
-    // an SOS sequence is running.
-    if (sos_state != SOS_STATE_NORMAL)
-        return;
-
-    int64_t current_ms =
-        now_ms();
-
-    bool should_update =
-        (last_periodic_gps_ms == 0) ||
-        ((current_ms -
-          last_periodic_gps_ms) >=
-         TELEMETRY_PERIODIC_UPDATE_MS);
-
-    if (!should_update)
-        return;
-
-    last_periodic_gps_ms =
-        current_ms;
-
-    ESP_LOGI(
-        TAG,
-        "======================================"
-    );
-
-    ESP_LOGI(
-        TAG,
-        "PERIODIC LIVE GPS & CLOUD SYNC"
-    );
-
-    ESP_LOGI(
-        TAG,
-        "======================================"
-    );
-
-    gps_location_t current_fix = {0};
-
-    if (request_gps_and_save(
-            &current_fix,
-            AT_DEFAULT_TIMEOUT_MS))
-    {
-        ESP_LOGI(
-            TAG,
-            "Live GPS location updated successfully."
-        );
-
-        // Upload live data to the website cloud
-        sync_telemetry_to_cloud(current_fix.latitude, current_fix.longitude, 0.0);
-    }
-    else
-    {
-        ESP_LOGW(
-            TAG,
-            "No new GPS fix. Keeping previous last live location."
-        );
-
-        // Do not refresh cloud timestamps with an old fix: the dashboard
-        // watchdog must be able to distinguish a stale GPS fix from a live one.
-    }
-}
-
 
 // =========================================================
 // CURRENT LOCATION SMS
@@ -579,6 +271,9 @@ static void build_last_location_message(
     char *out,
     size_t out_size)
 {
+    gps_location_t last_live_location =
+        last_known_location();
+
     int64_t age_ms =
         now_ms() -
         last_live_location.fix_time_ms;
@@ -679,6 +374,14 @@ static void start_sos_sequence(void)
         "======================================"
     );
 
+    // Cut short any background modem command so SOS gets the UART now.
+    a9g_preempt_background(true);
+
+    // Website alert first: queued for the cloud task, never blocks.
+    device_state_set_sos_active(true);
+
+    cloud_sync_sos_triggered();
+
     gpio_set_level(
         STATUS_LED_PIN,
         1
@@ -701,11 +404,25 @@ static void start_sos_sequence(void)
             "Calling guardian anyway."
         );
 
-        a9g_make_call(
-            PARENT_NUMBER
+        bool call_ok =
+            a9g_make_call(
+                PARENT_NUMBER
+            );
+
+        gps_location_t last_live_location =
+            last_known_location();
+
+        cloud_sync_sos_update(
+            last_live_location.valid ? SOS_LOCATION_LAST_KNOWN : SOS_LOCATION_NONE,
+            last_live_location.latitude,
+            last_live_location.longitude,
+            false,
+            call_ok
         );
 
-        sync_sos_to_cloud(true, 0.0, 0.0);
+        device_state_set_sos_active(false);
+
+        a9g_preempt_background(false);
 
         gpio_set_level(
             STATUS_LED_PIN,
@@ -729,9 +446,6 @@ static void start_sos_sequence(void)
 
     last_sos_gps_attempt_ms =
         0;
-
-    // SOS cloud update is sent after GPS acquisition so that no network
-    // operation can consume the bounded fresh-location acquisition window.
 }
 
 
@@ -749,6 +463,9 @@ static void handle_sos_state_machine(void)
 
     int64_t current_ms =
         now_ms();
+
+    gps_location_t last_live_location =
+        last_known_location();
 
     switch (sos_state)
     {
@@ -987,18 +704,36 @@ static void handle_sos_state_machine(void)
                     PARENT_NUMBER
                 );
 
-            // Begin the emergency call before cloud sync can wait on Wi-Fi.
+            // Attach the final location and results to the website alert.
             if (sos_current_location.valid)
             {
-                sync_sos_to_cloud(true, sos_current_location.latitude, sos_current_location.longitude);
+                cloud_sync_sos_update(
+                    SOS_LOCATION_CURRENT,
+                    sos_current_location.latitude,
+                    sos_current_location.longitude,
+                    sos_sms_ok,
+                    call_ok
+                );
             }
             else if (last_live_location.valid)
             {
-                sync_sos_to_cloud(true, last_live_location.latitude, last_live_location.longitude);
+                cloud_sync_sos_update(
+                    SOS_LOCATION_LAST_KNOWN,
+                    last_live_location.latitude,
+                    last_live_location.longitude,
+                    sos_sms_ok,
+                    call_ok
+                );
             }
             else
             {
-                sync_sos_to_cloud(true, 0.0, 0.0);
+                cloud_sync_sos_update(
+                    SOS_LOCATION_NONE,
+                    0.0,
+                    0.0,
+                    sos_sms_ok,
+                    call_ok
+                );
             }
 
             if (call_ok)
@@ -1047,6 +782,10 @@ static void handle_sos_state_machine(void)
             );
 
             // Return to normal operation
+            device_state_set_sos_active(false);
+
+            a9g_preempt_background(false);
+
             sos_state =
                 SOS_STATE_NORMAL;
 
@@ -1073,43 +812,68 @@ static void handle_sos_state_machine(void)
 // SOS BUTTON
 // =========================================================
 
+// The button must stay LOW (active) continuously for SOS_LONG_PRESS_MS.
+// Any HIGH sample restarts the timer, so short taps, contact bounce and
+// noise spikes never trigger an emergency. One trigger per press.
+
 static void handle_sos_button(void)
 {
-    static int64_t last_press_ms = 0;
+    static int64_t pressed_since_ms = 0;
+    static bool press_handled = false;
+    static int64_t last_trigger_ms = 0;
+
+    int64_t current_ms =
+        now_ms();
 
     // Active LOW
     if (gpio_get_level(
             SOS_BUTTON_PIN) != 0)
     {
+        pressed_since_ms = 0;
+        press_handled = false;
         return;
     }
 
-    int64_t current_ms =
-        now_ms();
+    if (pressed_since_ms == 0)
+    {
+        pressed_since_ms =
+            current_ms;
+        return;
+    }
 
-    // Debounce
-    if ((current_ms -
-         last_press_ms) <=
-        SOS_DEBOUNCE_MS)
+    // Minimum of 80 ms even if the long press is configured shorter
+    int64_t hold_required =
+        (SOS_LONG_PRESS_MS > 80) ? SOS_LONG_PRESS_MS : 80;
+
+    if (press_handled ||
+        (current_ms - pressed_since_ms) < hold_required)
     {
         return;
     }
 
-    last_press_ms =
-        current_ms;
+    press_handled =
+        true;
 
-    if (sos_state ==
-        SOS_STATE_NORMAL)
-    {
-        start_sos_sequence();
-    }
-    else
+    if (sos_state != SOS_STATE_NORMAL)
     {
         ESP_LOGW(
             TAG,
             "SOS already running. Button ignored."
         );
+
+        return;
     }
+
+    if (last_trigger_ms != 0 &&
+        (current_ms - last_trigger_ms) <= SOS_DEBOUNCE_MS)
+    {
+        return;
+    }
+
+    last_trigger_ms =
+        current_ms;
+
+    start_sos_sequence();
 }
 
 // =========================================================
@@ -1187,6 +951,24 @@ static void gpio_setup(void)
 }
 
 // =========================================================
+// STATUS LED (only outside an SOS sequence)
+// =========================================================
+
+static void update_status_led(void)
+{
+    int64_t t = now_ms();
+
+    bool on = cloud_sync_is_healthy()
+                  ? (t % 3000) < 80
+                  : (t % 1000) < 500;
+
+    gpio_set_level(
+        STATUS_LED_PIN,
+        on ? 1 : 0
+    );
+}
+
+// =========================================================
 // MAIN HIGH-PRIORITY SAFETY TASK
 // Handles SOS button and emergency state machine
 // =========================================================
@@ -1204,6 +986,11 @@ static void safety_task(
         // SOS state machine
         handle_sos_state_machine();
 
+        if (sos_state == SOS_STATE_NORMAL)
+        {
+            update_status_led();
+        }
+
         // Fast loop for instantaneous button/SOS timing (<50ms)
         vTaskDelay(
             pdMS_TO_TICKS(50)
@@ -1212,30 +999,378 @@ static void safety_task(
 }
 
 // =========================================================
-// BACKGROUND TELEMETRY TASK
-// Handles periodic GPS updates and Cloud Sync
+// MODEM TASK
+// Supervises the A9G and polls each subsystem on its own
+// schedule. A failure in one (no GPS fix, no SIM) never
+// stops the others; a silent modem is re-initialized.
 // =========================================================
 
-static void telemetry_task(
+static void modem_bring_up(void)
+{
+    a9g_ready =
+        true;
+
+    device_state_set_modem(true);
+
+    bool gps_ok =
+        a9g_enable_gps();
+
+    device_state_set_gps_enabled(gps_ok);
+
+    ESP_LOGI(
+        TAG,
+        "A9G ready. GPS %s.",
+        gps_ok ? "enabled" : "enable failed (will retry)"
+    );
+}
+
+static void poll_gps(void)
+{
+    static a9g_gps_result_t last_result = A9G_GPS_FIX;
+    static int64_t last_searching_log_ms = 0;
+
+    device_state_t state;
+    device_state_snapshot(&state);
+
+    if (!state.gps_enabled)
+    {
+        device_state_set_gps_enabled(a9g_enable_gps());
+    }
+
+    // Prefer the NMEA stream (receiver speed, course, satellites, HDOP);
+    // fall back to AT+LOCATION if this A9G firmware does not provide it.
+    static bool nmea_available = true;
+    static int nmea_misses = 0;
+
+    a9g_gps_result_t result = A9G_GPS_NO_RESPONSE;
+
+    if (nmea_available)
+    {
+        a9g_nmea_t nmea;
+
+        if (a9g_read_nmea(&nmea, GPS_NMEA_LISTEN_MS))
+        {
+            if (nmea_misses >= 0)
+            {
+                ESP_LOGI(TAG, "GPS: using NMEA stream (speed, satellites, accuracy).");
+                nmea_misses = -1; // logged once
+            }
+
+            if (nmea.fix)
+            {
+                gps_fix_extra_t extra = {
+                    .speed_kmh = nmea.speed_kmh,
+                    .course_deg = nmea.course_deg,
+                    .satellites = nmea.satellites,
+                    .hdop = nmea.hdop
+                };
+
+                device_state_record_fix(nmea.lat, nmea.lon, &extra);
+                result = A9G_GPS_FIX;
+            }
+            else
+            {
+                device_state_set_gps_quality(nmea.satellites, nmea.hdop);
+                result = A9G_GPS_NO_FIX;
+            }
+        }
+        else if (sos_state != SOS_STATE_NORMAL)
+        {
+            return; // read was cut short for SOS; not an NMEA failure
+        }
+        else if (nmea_misses >= 0 && ++nmea_misses >= GPS_NMEA_MAX_MISSES)
+        {
+            nmea_available = false;
+
+            ESP_LOGW(TAG, "GPS: no NMEA from A9G; using AT+LOCATION instead.");
+        }
+    }
+
+    if (!nmea_available || result == A9G_GPS_NO_RESPONSE)
+    {
+        double lat = 0.0;
+        double lon = 0.0;
+
+        result =
+            a9g_read_gps(
+                &lat,
+                &lon,
+                AT_DEFAULT_TIMEOUT_MS
+            );
+
+        if (result == A9G_GPS_FIX)
+        {
+            device_state_record_fix(lat, lon, NULL);
+        }
+    }
+
+    if (result == A9G_GPS_NO_FIX)
+    {
+        int64_t current_ms = now_ms();
+
+        if (last_result != A9G_GPS_NO_FIX ||
+            (current_ms - last_searching_log_ms) >= 60000)
+        {
+            last_searching_log_ms = current_ms;
+
+            ESP_LOGW(
+                TAG,
+                "GPS searching for satellites (no fix yet). Antenna needs open sky."
+            );
+        }
+    }
+
+    last_result = result;
+}
+
+static void poll_cellular(void)
+{
+    static bool last_sim = false;
+    static bool last_registered = false;
+    static bool first_poll = true;
+    static bool sms_configured = false;
+
+    bool sim =
+        a9g_check_sim();
+
+    bool registered =
+        sim && a9g_check_registration();
+
+    int csq = -1;
+
+    if (!a9g_get_csq(&csq))
+    {
+        csq = -1;
+    }
+
+    if (sim && !sms_configured)
+    {
+        sms_configured =
+            a9g_setup_sms();
+    }
+    else if (!sim)
+    {
+        sms_configured =
+            false;
+    }
+
+    if (first_poll || sim != last_sim || registered != last_registered)
+    {
+        ESP_LOGI(
+            TAG,
+            "Cellular: SIM %s (%s), network %s, CSQ %d",
+            sim ? "ready" : "NOT ready - SMS/call unavailable",
+            a9g_sim_status(),
+            registered ? "registered" : "not registered",
+            csq
+        );
+    }
+
+    first_poll = false;
+    last_sim = sim;
+    last_registered = registered;
+
+    device_state_set_cellular(sim, a9g_sim_status(), registered, csq);
+}
+
+static void poll_battery(void)
+{
+    int pct = -1;
+    int mv = -1;
+
+    if (!a9g_get_battery(&pct, &mv))
+    {
+        pct = -1;
+        mv = -1;
+    }
+
+    device_state_set_battery(pct, mv);
+}
+
+static void modem_task(
     void *arg)
 {
     (void)arg;
 
-    // Initial settle delay before first background telemetry check
-    vTaskDelay(pdMS_TO_TICKS(5000));
+    int64_t last_gps_ms = 0;
+    int64_t last_cellular_ms = 0;
+    int64_t last_battery_ms = 0;
+    bool announced = false;
+
+    a9g_set_background_task();
+
+    esp_task_wdt_add(NULL);
 
     while (1)
     {
-        // Yield if an SOS emergency is ongoing
-        if (sos_state == SOS_STATE_NORMAL && a9g_ready)
+        esp_task_wdt_reset();
+
+        // -----------------------------------------
+        // Bring up / recover the modem
+        // -----------------------------------------
+
+        if (!a9g_ready)
         {
-            handle_periodic_gps_update();
+            if (!a9g_init())
+            {
+                device_state_set_modem(false);
+
+                ESP_LOGE(
+                    TAG,
+                    "A9G not responding. GPS/SMS/CALL unavailable; retrying in %d s.",
+                    MODEM_REINIT_INTERVAL_MS / 1000
+                );
+
+                esp_task_wdt_reset();
+
+                vTaskDelay(
+                    pdMS_TO_TICKS(MODEM_REINIT_INTERVAL_MS)
+                );
+
+                continue;
+            }
+
+            modem_bring_up();
+
+            last_gps_ms = 0;
+            last_cellular_ms = 0;
+            last_battery_ms = 0;
+
+            if (!announced)
+            {
+                announced = true;
+
+                ESP_LOGI(
+                    TAG,
+                    "System ready. Press SOS to start emergency sequence."
+                );
+
+                beep(
+                    1,
+                    100
+                );
+            }
+        }
+
+        // -----------------------------------------
+        // Leave the UART to the SOS sequence
+        // -----------------------------------------
+
+        if (sos_state != SOS_STATE_NORMAL)
+        {
+            vTaskDelay(
+                pdMS_TO_TICKS(200)
+            );
+
+            continue;
+        }
+
+        int64_t current_ms =
+            now_ms();
+
+        // One subsystem per pass keeps each UART hold short.
+        if (last_gps_ms == 0 ||
+            (current_ms - last_gps_ms) >= GPS_PERIODIC_UPDATE_MS)
+        {
+            last_gps_ms = current_ms;
+            poll_gps();
+        }
+        else if (last_cellular_ms == 0 ||
+                 (current_ms - last_cellular_ms) >= MODEM_STATUS_POLL_MS)
+        {
+            last_cellular_ms = current_ms;
+            poll_cellular();
+        }
+        else if (last_battery_ms == 0 ||
+                 (current_ms - last_battery_ms) >= BATTERY_POLL_MS)
+        {
+            last_battery_ms = current_ms;
+            poll_battery();
+        }
+
+        // -----------------------------------------
+        // Detect a modem that stopped answering
+        // -----------------------------------------
+
+        if (a9g_silent_command_count() >= MODEM_MAX_SILENT_COMMANDS)
+        {
+            ESP_LOGE(
+                TAG,
+                "A9G stopped responding. Re-initializing."
+            );
+
+            a9g_ready =
+                false;
+
+            device_state_set_modem(false);
+
+            continue;
         }
 
         vTaskDelay(
-            pdMS_TO_TICKS(1000)
+            pdMS_TO_TICKS(250)
         );
     }
+}
+
+// =========================================================
+// NVS + BOOT DIAGNOSTICS
+// =========================================================
+
+static const char *reset_reason_name(esp_reset_reason_t reason)
+{
+    switch (reason)
+    {
+        case ESP_RST_POWERON:   return "power_on";
+        case ESP_RST_EXT:       return "external";
+        case ESP_RST_SW:        return "software";
+        case ESP_RST_PANIC:     return "panic";
+        case ESP_RST_INT_WDT:   return "interrupt_watchdog";
+        case ESP_RST_TASK_WDT:  return "task_watchdog";
+        case ESP_RST_WDT:       return "watchdog";
+        case ESP_RST_DEEPSLEEP: return "deep_sleep";
+        case ESP_RST_BROWNOUT:  return "brownout";
+        case ESP_RST_SDIO:      return "sdio";
+        default:                return "unknown";
+    }
+}
+
+static void init_nvs_and_boot_info(void)
+{
+    esp_err_t ret = nvs_flash_init();
+
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES ||
+        ret == ESP_ERR_NVS_NEW_VERSION_FOUND)
+    {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+
+    ESP_ERROR_CHECK(ret);
+
+    uint32_t boot_count = 0;
+    nvs_handle_t nvs;
+
+    if (nvs_open("beacon", NVS_READWRITE, &nvs) == ESP_OK)
+    {
+        nvs_get_u32(nvs, "boot_count", &boot_count);
+        boot_count++;
+        nvs_set_u32(nvs, "boot_count", boot_count);
+        nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+
+    const char *reason =
+        reset_reason_name(esp_reset_reason());
+
+    device_state_set_boot_info(boot_count, reason);
+
+    ESP_LOGI(
+        TAG,
+        "Boot #%lu, reset reason: %s",
+        (unsigned long)boot_count,
+        reason
+    );
 }
 
 // =========================================================
@@ -1251,7 +1386,9 @@ void app_main(void)
 
     ESP_LOGI(
         TAG,
-        "Guardian Beacon Booting..."
+        "Guardian Beacon %s Booting... (device %s)",
+        FIRMWARE_VERSION,
+        DEVICE_ID
     );
 
     ESP_LOGI(
@@ -1261,76 +1398,26 @@ void app_main(void)
 
     gpio_setup();
 
-    // ---------------------------------------------
-    // Initialize Wi-Fi Fallback
-    // ---------------------------------------------
-    wifi_init_fallback();
+    device_state_init();
 
-    // ---------------------------------------------
-    // Initialize A9G
-    // ---------------------------------------------
+    init_nvs_and_boot_info();
 
-    if (!a9g_init())
-    {
-        ESP_LOGE(
-            TAG,
-            "A9G initialization failed."
-        );
+    // Cloud and modem tasks subscribe to the task watchdog; a hang longer
+    // than TASK_WDT_TIMEOUT_MS restarts the device.
+    esp_task_wdt_config_t wdt_config = {
+        .timeout_ms = TASK_WDT_TIMEOUT_MS,
+        .idle_core_mask = (1 << 0) | (1 << 1),
+        .trigger_panic = true
+    };
 
-        ESP_LOGE(
-            TAG,
-            "GPS/SMS/CALL functions may not work."
-        );
-    }
-    else
-    {
-        a9g_ready =
-            true;
-
-        // -----------------------------------------
-        // Enable GPS
-        // -----------------------------------------
-
-        if (a9g_enable_gps())
-        {
-            ESP_LOGI(
-                TAG,
-                "GPS enabled successfully."
-            );
-        }
-        else
-        {
-            ESP_LOGE(
-                TAG,
-                "GPS could not be enabled."
-            );
-        }
-
-            ESP_LOGI(TAG, "Firebase cloud sync uses ESP32 Wi-Fi; configure its credentials for uploads.");
-
-        ESP_LOGI(
-            TAG,
-            "System ready."
-        );
-
-        ESP_LOGI(
-            TAG,
-            "GPS will be checked periodically."
-        );
-
-        ESP_LOGI(
-            TAG,
-            "Press SOS to start emergency sequence."
-        );
-
-        beep(
-            1,
-            100
-        );
-    }
+    ESP_ERROR_CHECK(
+        esp_task_wdt_reconfigure(&wdt_config)
+    );
 
     // ---------------------------------------------
     // 1. High-Priority Safety Task (Priority 10)
+    // Started first so SOS works even while the
+    // modem or Wi-Fi are still coming up.
     // ---------------------------------------------
     xTaskCreate(
         safety_task,
@@ -1342,14 +1429,19 @@ void app_main(void)
     );
 
     // ---------------------------------------------
-    // 2. Background Telemetry Task (Priority 2)
+    // 2. Wi-Fi + Cloud Task (Priority 4)
+    // ---------------------------------------------
+    cloud_sync_start();
+
+    // ---------------------------------------------
+    // 3. Modem / Sensor Task (Priority 3)
     // ---------------------------------------------
     xTaskCreate(
-        telemetry_task,
-        "telemetry_task",
+        modem_task,
+        "modem_task",
         4096,
         NULL,
-        2,
+        3,
         NULL
     );
 }

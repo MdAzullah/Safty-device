@@ -3,180 +3,247 @@
 
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Guardian Beacon — Safety Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Guardian Beacon</title>
+  <meta name="description" content="Live location, device health and SOS alerts for your Guardian Beacon." />
+  <meta name="theme-color" content="#0f1318" />
 
-  <!-- Typography -->
+  <!-- Apply the saved/system theme before first paint (no flash) -->
+  <script>
+    (function () {
+      var saved = null;
+      try { saved = localStorage.getItem("guardian_beacon_theme"); } catch (e) {}
+      var dark = saved ? saved === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+      document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+    })();
+  </script>
+
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link
-    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap"
+    href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
     rel="stylesheet">
 
-  <!-- Leaflet Map CSS & JS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-
-  <!-- Firebase Realtime Database SDK (Optional CDN) -->
-  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
-
-  <!-- Application Stylesheet -->
   <link rel="stylesheet" href="css/style.css" />
 
+  <!-- Deferred: downloads in parallel, runs in order before js/app.js -->
+  <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script defer src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script defer src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script defer src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+  <script type="module" src="js/app.js"></script>
 </head>
 
 <body>
-  <!-- Header / Navigation Bar -->
-  <header class="topbar">
+  <!-- Icon set -->
+  <svg xmlns="http://www.w3.org/2000/svg" class="icon-sprite" aria-hidden="true">
+    <symbol id="i-mark" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="5" opacity=".55" /><circle cx="12" cy="12" r="1.8" fill="currentColor" stroke="none" /></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5z" /></symbol>
+    <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7" /><circle cx="12" cy="12" r="2" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3" /></symbol>
+    <symbol id="i-person" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5" /><path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5" /></symbol>
+    <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 3v12M7.5 7.5 12 3l4.5 4.5" /><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7" /></symbol>
+    <symbol id="i-phone" viewBox="0 0 24 24"><path d="M5 4h3.2l1.6 4-2 1.3a11 11 0 0 0 4.9 4.9l1.3-2 4 1.6V17a2 2 0 0 1-2 2A15 15 0 0 1 3 6a2 2 0 0 1 2-2z" /></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3.5 2.5 20h19L12 3.5z" /><path d="M12 10v4.5M12 17.2v.3" /></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" /></symbol>
+    <symbol id="i-battery" viewBox="0 0 24 24"><rect x="2.5" y="7" width="17" height="10" rx="2" /><path d="M22 10.5v3" /></symbol>
+    <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M2.5 9a14 14 0 0 1 19 0M5.5 12.5a9.5 9.5 0 0 1 13 0M8.6 16a5 5 0 0 1 6.8 0" /><circle cx="12" cy="19.2" r=".9" fill="currentColor" /></symbol>
+    <symbol id="i-signal" viewBox="0 0 24 24"><path d="M4 19v-2M9 19v-5M14 19v-8M19 19V6" /></symbol>
+    <symbol id="i-chip" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" /><path d="M9 2.5V6M15 2.5V6M9 18v3.5M15 18v3.5M2.5 9H6M2.5 15H6M18 9h3.5M18 15h3.5" /></symbol>
+    <symbol id="i-gps" viewBox="0 0 24 24"><path d="M12 21s-6.5-5.8-6.5-11a6.5 6.5 0 0 1 13 0c0 5.2-6.5 11-6.5 11z" /><circle cx="12" cy="10" r="2.3" /></symbol>
+    <symbol id="i-logout" viewBox="0 0 24 24"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3" /><path d="M10 16l-4-4 4-4M6 12h10" /></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6" /></symbol>
+  </svg>
+
+  <a class="skip-link" href="#panel">Skip to device status</a>
+
+  <header class="app-bar">
     <div class="brand">
-      <span class="brand-mark" aria-hidden="true">
-        <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
-          <circle cx="13" cy="13" r="12" stroke="currentColor" stroke-width="1.4" />
-          <circle cx="13" cy="13" r="4.2" fill="currentColor" />
-          <circle cx="13" cy="13" r="8" stroke="currentColor" stroke-width="1" opacity="0.5" />
-        </svg>
-      </span>
+      <svg class="brand-mark" aria-hidden="true"><use href="#i-mark" /></svg>
       <div class="brand-text">
         <span class="brand-name">Guardian Beacon</span>
-        <span class="brand-sub">Safety Device Dashboard</span>
+        <span class="brand-sub">Device monitor</span>
       </div>
     </div>
 
-    <div class="topbar-actions">
-      <div class="guardian-auth" aria-label="Guardian account">
-        <input id="guardianEmail" type="email" autocomplete="username" placeholder="Guardian email" aria-label="Guardian email">
-        <input id="guardianPassword" type="password" autocomplete="current-password" placeholder="Password" aria-label="Guardian password">
-        <button class="icon-tool-btn" id="guardianSignIn" type="button">Sign in</button>
-        <button class="icon-tool-btn" id="guardianSignOut" type="button" hidden>Sign out</button>
-        <span id="guardianAuthStatus" role="status" aria-live="polite"></span>
-      </div>
-      <span class="conn-pill connected" id="connPill">
-        <span class="dot"></span> <span id="connText">Beacon Active</span>
+    <div class="app-bar-actions">
+      <span class="status-chip" id="connPill" data-state="connecting" role="status" aria-live="polite">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span id="connText">Connecting</span>
       </span>
-      <button class="theme-toggle" id="themeToggleBtn" aria-label="Toggle light or dark theme" title="Toggle theme">🌙</button>
+
+      <div class="account" id="accountArea">
+        <button class="btn btn-ghost btn-sm" id="btnOpenSignIn" type="button">Sign in</button>
+        <div class="account-signed" id="accountSigned" hidden>
+          <span class="account-email" id="accountEmail"></span>
+          <button class="icon-btn" id="guardianSignOut" type="button" aria-label="Sign out" title="Sign out">
+            <svg aria-hidden="true"><use href="#i-logout" /></svg>
+          </button>
+        </div>
+      </div>
+
+      <button class="icon-btn" id="themeToggleBtn" type="button" aria-label="Switch to dark theme" title="Switch theme">
+        <svg aria-hidden="true"><use id="themeIcon" href="#i-moon" /></svg>
+      </button>
     </div>
   </header>
 
-  <!-- SOS Emergency Alert Banner -->
-  <div class="sos-banner" id="sosBanner" hidden>
-    <div class="sos-banner-inner">
-      <span class="sos-pulse-dot"></span>
+  <div class="sos-banner" id="sosBanner" role="alert" hidden>
+    <div class="sos-inner">
+      <svg class="sos-icon" aria-hidden="true"><use href="#i-alert" /></svg>
       <div class="sos-text">
-        <strong id="sosTitle">SOS ALERT — Guardian Beacon</strong>
-        <span id="sosSub">Emergency alert triggered · Live coordinates updating</span>
+        <strong id="sosTitle">SOS alert</strong>
+        <span id="sosSub"></span>
       </div>
-      <button class="sos-ack" id="sosAck">Acknowledge</button>
+      <div class="sos-actions">
+        <button class="btn btn-sm btn-on-danger-ghost" id="sosLocate" type="button">Show on map</button>
+        <button class="btn btn-sm btn-on-danger" id="sosAck" type="button">Acknowledge</button>
+      </div>
     </div>
   </div>
 
-  <!-- Main Dashboard Shell -->
-  <main class="app-shell">
-    <div class="layout">
-      <!-- Map Section -->
-      <section class="map-panel">
-        <div class="map-toolbar">
-          <div class="map-toolbar-left">
-            <div class="device-badge">
-              <span class="device-badge-dot"></span>
-              <span class="device-badge-name" id="badgeDeviceName">Guardian Beacon</span>
-            </div>
-            <div class="map-legend">
-              <span class="legend-item"><span class="legend-swatch live"></span> Current location</span>
-              <span class="legend-item"><span class="legend-swatch trail"></span> Past path</span>
-            </div>
+  <main class="layout">
+    <section class="map-area" aria-label="Map">
+      <div id="map"></div>
+
+      <div class="map-controls" role="group" aria-label="Map controls">
+        <button class="map-btn" id="btnCenterMapTop" type="button" aria-label="Center on device" title="Center on device">
+          <svg aria-hidden="true"><use href="#i-target" /></svg>
+        </button>
+        <button class="map-btn" id="btnParentLocation" type="button" aria-label="Show my location" title="Show my location">
+          <svg aria-hidden="true"><use href="#i-person" /></svg>
+        </button>
+      </div>
+
+      <div class="map-legend" aria-hidden="true">
+        <span><i class="lg lg-device"></i>Device</span>
+        <span><i class="lg lg-trail"></i>Recent path</span>
+        <span><i class="lg lg-you"></i>You</span>
+      </div>
+
+      <div class="map-message" id="parentLocationStatus" role="status" aria-live="polite" hidden></div>
+
+      <div class="signin-overlay" id="signinOverlay" hidden>
+        <form class="signin-card" id="signinForm" novalidate>
+          <svg class="signin-mark" aria-hidden="true"><use href="#i-mark" /></svg>
+          <h2 class="signin-title">Sign in to your dashboard</h2>
+          <p class="signin-lead">Use the guardian account created for this device.</p>
+
+          <label class="field">
+            <span class="field-label">Email</span>
+            <input id="guardianEmail" type="email" autocomplete="username" inputmode="email" required>
+          </label>
+          <label class="field">
+            <span class="field-label">Password</span>
+            <input id="guardianPassword" type="password" autocomplete="current-password" required>
+          </label>
+
+          <p class="form-error" id="guardianAuthStatus" role="alert"></p>
+
+          <button class="btn btn-primary btn-block" id="guardianSignIn" type="submit">Sign in</button>
+        </form>
+      </div>
+    </section>
+
+    <aside class="panel" id="panel" tabindex="-1" aria-label="Device status">
+      <section class="panel-section summary">
+        <div class="summary-head">
+          <div class="summary-title">
+            <p class="eyebrow" id="deviceIdLabel">beacon-01</p>
+            <h1 class="device-name" id="statChild">Guardian Beacon</h1>
           </div>
-          <div class="map-toolbar-right">
-            <button class="icon-tool-btn" id="btnParentLocation" type="button" title="Share this browser's location on the map">
-              <span class="icon">◎</span> My Location
-            </button>
-            <button class="icon-tool-btn" id="btnCenterMapTop" title="Center on Beacon">
-              <span class="icon">⌖</span> Center Map
-            </button>
-          </div>
+          <span class="badge" id="deviceOnlinePill" data-tone="neutral">Waiting</span>
         </div>
-        <div class="map-stack">
-          <div id="map"></div>
-          <div class="map-location-status" id="parentLocationStatus" role="status" aria-live="polite">Your location is not shared</div>
+        <p class="last-seen">Last seen <strong id="statUpdated">—</strong></p>
+        <div class="notice" id="feedNotice" role="status" aria-live="polite" hidden></div>
+      </section>
+
+      <section class="panel-section">
+        <h2 class="section-title">Location</h2>
+        <div class="coords">
+          <span class="coords-value mono" id="statCoords">—</span>
+          <button class="icon-btn icon-btn-sm" id="btnCopyCoords" type="button" aria-label="Copy coordinates" title="Copy coordinates" disabled>
+            <svg aria-hidden="true"><use href="#i-copy" /></svg>
+          </button>
+        </div>
+        <dl class="metrics">
+          <div class="metric">
+            <dt>GPS</dt>
+            <dd id="statGps">—</dd>
+          </div>
+          <div class="metric">
+            <dt>Speed</dt>
+            <dd id="statSpeed">—</dd>
+          </div>
+          <div class="metric">
+            <dt>Accuracy</dt>
+            <dd id="statAccuracy">—</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section class="panel-section">
+        <h2 class="section-title">Device health</h2>
+        <ul class="health">
+          <li class="health-row" id="rowBattery" data-tone="neutral">
+            <svg class="health-icon" aria-hidden="true"><use href="#i-battery" /></svg>
+            <span class="health-label">Battery</span>
+            <span class="health-value" id="statBattery">—</span>
+          </li>
+          <li class="health-row" id="rowWifi" data-tone="neutral">
+            <svg class="health-icon" aria-hidden="true"><use href="#i-wifi" /></svg>
+            <span class="health-label">Wi-Fi</span>
+            <span class="health-value" id="statNetwork">—</span>
+          </li>
+          <li class="health-row" id="rowCellular" data-tone="neutral">
+            <svg class="health-icon" aria-hidden="true"><use href="#i-signal" /></svg>
+            <span class="health-label">Cellular</span>
+            <span class="health-value" id="statSignal">—</span>
+          </li>
+          <li class="health-row" id="rowModem" data-tone="neutral">
+            <svg class="health-icon" aria-hidden="true"><use href="#i-chip" /></svg>
+            <span class="health-label">Modem</span>
+            <span class="health-value" id="statModem">—</span>
+          </li>
+        </ul>
+      </section>
+
+      <section class="panel-section">
+        <h2 class="section-title">Actions</h2>
+        <div class="actions">
+          <button class="btn btn-secondary" id="btnCenter" type="button">
+            <svg aria-hidden="true"><use href="#i-target" /></svg>Center map
+          </button>
+          <button class="btn btn-secondary" id="btnShare" type="button">
+            <svg aria-hidden="true"><use href="#i-share" /></svg>Share location
+          </button>
+          <button class="btn btn-secondary" id="btnCall" type="button">
+            <svg aria-hidden="true"><use href="#i-phone" /></svg>Call device
+          </button>
+          <button class="btn btn-secondary btn-danger-text" id="btnTestSos" type="button">
+            <svg aria-hidden="true"><use href="#i-alert" /></svg>Test SOS alert
+          </button>
         </div>
       </section>
 
-      <!-- Sidebar Status & Telemetry Panel -->
-      <aside class="sidebar">
-        <!-- Live Status Card -->
-        <div class="card status-card">
-          <div class="card-head">
-            <h2>Live Status</h2>
-            <span class="pill online" id="deviceOnlinePill">Online</span>
-          </div>
-          <div class="status-grid">
-            <div class="status-item">
-              <span class="status-label">Device</span>
-              <span class="status-value" id="statChild">Guardian Beacon</span>
-            </div>
-            <div class="status-item">
-              <span class="status-label">Last Update</span>
-              <span class="status-value mono" id="statUpdated">—</span>
-            </div>
-            <div class="status-item">
-              <span class="status-label">Coordinates</span>
-              <span class="status-value mono" id="statCoords">—</span>
-            </div>
-            <div class="status-item">
-              <span class="status-label">Battery</span>
-              <span class="status-value" id="statBattery">—</span>
-            </div>
-            <div class="status-item">
-              <span class="status-label">Speed</span>
-              <span class="status-value mono" id="statSpeed">—</span>
-            </div>
-            <div class="status-item">
-              <span class="status-label">Network</span>
-              <span class="status-value" id="statNetwork">Cellular (A9G)</span>
-            </div>
-            <div class="status-item">
-              <span class="status-label">GPS Signal</span>
-              <span class="status-value" id="statSignal">—</span>
-            </div>
-          </div>
+      <section class="panel-section">
+        <div class="section-head">
+          <h2 class="section-title">Recent locations</h2>
+          <span class="count" id="historyCount"></span>
         </div>
+        <ol class="history" id="historyList"></ol>
+      </section>
 
-        <!-- Recent Locations / Pings Card -->
-        <div class="card history-card">
-          <div class="card-head">
-            <h2>Recent Locations</h2>
-            <span class="eyebrow">Live Feed</span>
-          </div>
-          <ul class="history-list" id="historyList"></ul>
-        </div>
-
-        <!-- Quick Actions Card -->
-        <div class="card actions-card">
-          <div class="card-head">
-            <h2>Quick Actions</h2>
-          </div>
-          <div class="actions-grid">
-            <button class="action-btn" id="btnCenter">
-              <span class="action-icon">⌖</span> Center Map
-            </button>
-            <button class="action-btn" id="btnCall">
-              <span class="action-icon">☎</span> Call Device
-            </button>
-            <button class="action-btn" id="btnShare">
-              <span class="action-icon">↗</span> Share Location
-            </button>
-            <button class="action-btn danger" id="btnTestSos">
-              <span class="action-icon">▲</span> Simulate SOS
-            </button>
-          </div>
-        </div>
-      </aside>
-    </div>
+      <details class="panel-section diagnostics">
+        <summary>
+          <svg class="chevron" aria-hidden="true"><use href="#i-chevron" /></svg>
+          Diagnostics
+        </summary>
+        <dl class="diag" id="diagList"></dl>
+      </details>
+    </aside>
   </main>
-
-  <!-- Application Entry Point -->
-  <script type="module" src="js/app.js"></script>
 </body>
 
 </html>

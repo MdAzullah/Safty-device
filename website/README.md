@@ -8,7 +8,7 @@ The dashboard displays ESP32/A9G child-device telemetry, location history, and S
 
 Serve this directory using a local HTTP server (ES modules do not work reliably from `file://`). For example, use VS Code Live Server or Python's HTTP server, then open `index.html` at `http://localhost:8000`. Browser geolocation works on HTTPS sites and localhost; it does not work on arbitrary HTTP origins.
 
-Set `USE_LIVE_DATA: false` in `js/config.js` for the in-memory simulated demo, or `true` for Firebase. `data/mock-locations.json` is a legacy sample and is not the active demo source.
+Set `USE_LIVE_DATA: false` in `js/config.js` for the in-memory simulated demo, or `true` for Firebase. Adding `?demo` to the URL also starts the simulation without editing the config. `data/mock-locations.json` is a legacy sample and is not the active demo source.
 
 ## Firebase setup
 
@@ -50,12 +50,16 @@ For production, route device writes through a trusted backend or implement a pro
 
 The firmware and website use device ID `beacon-01` and these paths:
 
-- `devices/beacon-01/live`: object replaced with `PUT`; fields are `lat`, `lng`, `speed`, `battery`, `signal`, `network`, `status`, and `timestamp`.
-- `devices/beacon-01/history`: a telemetry object appended with `POST`; each entry has coordinates, metrics, and timestamp. Apply retention/pruning so the history does not grow forever. The dashboard currently limits displayed points to 50.
-- `devices/beacon-01/sos_alert`: object replaced with `PUT`; fields include `active`, `deviceName`, optional `lat`/`lng`, and `timestamp`. The acknowledge button writes `active: false`.
-- `guardians/<Firebase Auth UID>/location`: guardian coordinates, `updatedAt`, and `uid`. Written after the guardian clicks **My Location**, grants browser location permission, and is signed in. The same authenticated user can see the synced marker on their other logged-in sessions.
+- `devices/beacon-01/live`: heartbeat replaced every 5 seconds while the device has Wi-Fi.
+- `devices/beacon-01/history`: new GPS fixes (last 50 shown on the map; no retention yet).
+- `devices/beacon-01/sos_alert`: current SOS alert; the Acknowledge button writes `active: false` and `acknowledgedAt`, which closes the banner in every signed-in session.
+- `guardians/<Firebase Auth UID>/location`: written after the guardian clicks **Show my location** on the map and grants permission.
 
-Firmware timestamps use Firebase's server timestamp placeholder (`{ ".sv": "timestamp" }`), resolved by Realtime Database to epoch milliseconds. The website expects epoch milliseconds; it marks the device offline if there is no valid timestamp or it is older than 45 seconds. GPS fixes are sent every 15 seconds when valid; a stale GPS fix is not resent as a fresh update.
+Every field, its type and writer are documented in [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md#firebase-data-model). Keep that file, `firmware/src/cloud_sync.c` and `js/services/liveDataService.js` in sync.
+
+Firmware timestamps use Firebase's server timestamp placeholder (`{ ".sv": "timestamp" }`), resolved by Realtime Database to epoch milliseconds. The website expects epoch milliseconds and corrects for the browser clock using Firebase's `.info/serverTimeOffset`; it marks the device Delayed when the last heartbeat is older than `staleAfterMs` (9 s) and Offline after `offlineTimeoutMs` (15 s); both scale up automatically for firmware with a slower `heartbeatSec`. Status changes at the exact threshold and is re-checked when the tab becomes visible again. GPS is polled every 5 seconds; `history` receives at most one entry per 15 seconds and only for new fixes.
+
+Device listeners are attached after sign-in and re-attached on every sign-in, so data appears without reloading. If the rules deny a read, the Live Status card shows the exact path that was refused.
 
 ### Cellular/Wi-Fi transport notes
 
@@ -65,16 +69,10 @@ The A9G AT-command HTTP flow is not used for cloud writes because the project do
 
 ## Parent location on the map
 
-Click **My Location** to request the browser's current position. Browser permission is required. The map shows the parent marker and fits the view to include both parent and child. When signed in, the location is additionally saved under that account's Firebase UID and appears in other sessions for the same account. The current implementation is a one-shot location request; click again to refresh. No location is requested in the background.
+Click the person icon (**Show my location**) on the map to request the browser's current position. Browser permission is required. The map shows the parent marker and fits the view to include both parent and child. When signed in, the location is additionally saved under that account's Firebase UID and appears in other sessions for the same account. The current implementation is a one-shot location request; click again to refresh. No location is requested in the background.
 
 Location is sensitive personal information. Share it only with informed consent, use HTTPS, enforce authenticated rules, and consider allowing the guardian to clear the saved location.
 
-## Current implemented features and limitations
+## Status and limitations
 
-- ESP32/A9G GPS, SOS button flow, SMS/call attempts, and cloud telemetry serialization.
-- Live Firebase REST polling/SSE and in-memory demo mode.
-- Child live marker, history trail, status panel, and SOS banner.
-- Explicit browser parent-location request, map marker, and optional authenticated Firebase sync.
-- Email/password Firebase sign-in controls.
-
-Not yet implemented: continuous parent location tracking, background tracking, push notifications, geofencing, multi-device selection, or verified cellular PUT/TLS. Hardware transport and Firebase authorization must be tested on the actual board/database before relying on emergency alerts.
+What is implemented, what has been verified on hardware, known issues, and planned work are tracked in [`docs/TASKS.md`](../docs/TASKS.md). Not implemented: continuous/background guardian location, push notifications, geofencing, multi-device selection, and cellular data upload.

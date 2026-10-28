@@ -11,9 +11,32 @@
 // ESP32 UART2 <-> AI-Thinker A9G
 // =========================================================
 
+typedef enum
+{
+    A9G_GPS_FIX = 0,       // valid coordinates returned
+    A9G_GPS_NO_FIX,        // modem answered, no fix yet
+    A9G_GPS_NO_RESPONSE    // modem did not answer
+} a9g_gps_result_t;
+
+// Install UART (first call only) and verify the AT link.
+// Does not require a SIM. Safe to call again to recover the modem.
 bool a9g_init(void);
 
 bool a9g_enable_gps(void);
+
+// Single quick status queries (no retries)
+bool a9g_check_sim(void);
+
+// SIM state from the last a9g_check_sim(): "READY", "SIM PIN",
+// "NOT INSERTED", "SIM FAILURE", "NO RESPONSE", ...
+const char *a9g_sim_status(void);
+bool a9g_check_registration(void);
+
+// SMS text mode + GSM character set. Requires a ready SIM.
+bool a9g_setup_sms(void);
+
+// GPS request distinguishing "no fix" from "modem silent"
+a9g_gps_result_t a9g_read_gps(double *lat, double *lon, uint32_t timeout_ms);
 
 // Normal GPS request
 bool a9g_try_get_gps_location(double *lat, double *lon);
@@ -30,24 +53,38 @@ bool a9g_make_call(const char *number);
 
 void a9g_hangup(void);
 
-// =========================================================
-// GPRS & CLOUD DATA TRANSMISSION
-// =========================================================
-
-// Connect to GPRS cellular data network
-bool a9g_gprs_connect(const char *apn);
-
-// Send HTTP PUT request with JSON payload (e.g. Firebase live.json / sos_alert.json)
-bool a9g_http_put(const char *url, const char *json_body);
-
-// Send HTTP POST request with JSON payload (e.g. Firebase history.json)
-bool a9g_http_post(const char *url, const char *json_body);
-
-// Query battery percentage (0-100%) and voltage in mV via AT+CBC
+// Battery percentage (0-100) and voltage in mV via AT+CBC.
+// Returns false when the modem does not report it (no fake defaults).
 bool a9g_get_battery(int *pct, int *voltage_mv);
 
-// Query cell signal strength and return descriptive string ("Good", "Weak", etc.)
-bool a9g_get_signal(char *signal_out, size_t max_len, int *rssi_raw);
+// Raw cell signal quality 0-31 via AT+CSQ; -1 when not detectable.
+bool a9g_get_csq(int *csq);
+
+// Consecutive AT commands that received no response at all.
+uint32_t a9g_silent_command_count(void);
+
+// Result of one NMEA listen window; negative values mean unknown.
+typedef struct
+{
+    unsigned sentences;     // valid (checksummed) sentences received
+    bool fix;
+    double lat;
+    double lon;
+    double speed_kmh;
+    double course_deg;
+    int satellites;
+    double hdop;
+} a9g_nmea_t;
+
+// Stream NMEA (AT+GPSRD) for listen_ms and parse RMC/GGA.
+// Returns false when no sentence was received (feature unsupported or modem
+// silent), so the caller can fall back to AT+LOCATION.
+bool a9g_read_nmea(a9g_nmea_t *out, uint32_t listen_ms);
+
+// Register the calling task as the background poller. While preemption is
+// on, its commands return early so the SOS sequence gets the UART at once.
+void a9g_set_background_task(void);
+void a9g_preempt_background(bool preempt);
 
 // Thread safety lock for A9G UART bus
 void a9g_uart_lock(void);
@@ -57,4 +94,3 @@ bool a9g_send_at(const char *command,
                  char *response_buf,
                  size_t buf_size,
                  uint32_t timeout_ms);
-
